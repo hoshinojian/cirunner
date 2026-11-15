@@ -37,6 +37,7 @@ var (
 const tpl = `#cloud-config
 # Managed by cirunner. This machine is disposable - do not edit or deploy anything else on it.
 # Pitfall fixes encoded below (see nms docs/runbooks/gitrunner.md, known-pitfalls section).
+ssh_pwauth: false
 ssh_authorized_keys:
 {{- range .PublicKeys}}
   - '{{.}}'
@@ -73,9 +74,13 @@ users:
 runcmd:
   - systemctl enable --now docker
   - |
-    # Make sshd listen on both ports early (Ubuntu 24.04 socket-activation trap:
-    # disable ssh.socket and run ssh.service directly, same as vpsctl's generator).
+    # Fix root access early, then make sshd listen on both ports.
+    # DO's ubuntu image marks the (unknown, random) root password expired, which
+    # blocks even pubkey logins with "password change required"; clear the expiry
+    # so key-only auth works (2026-11-15 smoke finding). Ubuntu 24.04 also has the
+    # ssh.socket activation trap: disable it and run ssh.service directly.
     set -x
+    chage -d "$(date +%F)" root
     systemctl disable --now ssh.socket || true
     systemctl enable ssh.service || true
     systemctl restart ssh

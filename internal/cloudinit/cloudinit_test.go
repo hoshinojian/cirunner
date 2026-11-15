@@ -25,6 +25,9 @@ func TestRenderContainsPitfallFixes(t *testing.T) {
 	must := []string{
 		// 坑#1：禁 unattended-upgrades（自动升级会杀正跑 job）
 		`APT::Periodic::Unattended-Upgrade "0";`,
+		// DO 镜像 root 密码过期会挡公钥登录（2026-11-15 冒烟实录）
+		`chage -d "$(date +%F)" root`,
+		"ssh_pwauth: false",
 		// 救援通道：22 被路径过滤时仍可 443 进机（2026-11-15 冒烟实录）
 		"Port 22",
 		"Port 443",
