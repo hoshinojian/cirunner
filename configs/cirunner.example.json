@@ -1,0 +1,19 @@
+{
+  "vpsctl_bin": "/home/xingjian/vpsctl/bin/vpsctl",
+  "ssh_public_key_file": "~/.ssh/id_ed25519.pub",
+  "idle_timeout_min": 20,
+  "max_droplets": 2,
+  "poll_interval_sec": 60,
+  "repos": [
+    {
+      "repo": "hoshinojian/nms",
+      "account": "team2-ci",
+      "region": "sgp1",
+      "size": "c2-4vcpu-8gb",
+      "image": "ubuntu-24-04-x64",
+      "name_prefix": "cirunner",
+      "labels": ["ci"],
+      "max_runners": 1
+    }
+  ]
+}
