@@ -187,7 +187,7 @@ func cmdStatus(ctx context.Context, cfg *config.Config, eng *engine.Engine) erro
 		}
 		fmt.Println()
 		for _, d := range obs.Droplets {
-			fmt.Printf("  droplet %-32s id=%d\n", d.Name, d.ID)
+			fmt.Printf("  droplet %-32s id=%s\n", d.Name, d.ID)
 		}
 		if len(obs.Droplets) == 0 {
 			fmt.Println("  droplet（无）")
@@ -222,7 +222,7 @@ func cmdPlan(ctx context.Context, cfg *config.Config, eng *engine.Engine) error 
 			continue
 		}
 		for _, a := range acts {
-			fmt.Printf("%s  [计划] %s %d %s — %s\n", r.Repo, a.Kind, a.DropletID, a.RunnerName, a.Reason)
+			fmt.Printf("%s  [计划] %s %s %s — %s\n", r.Repo, a.Kind, a.DropletID, a.RunnerName, a.Reason)
 		}
 	}
 	return nil
@@ -249,7 +249,7 @@ func cmdUp(ctx context.Context, cfg *config.Config, eng *engine.Engine, sel stri
 	if err != nil {
 		return err
 	}
-	fmt.Printf("已建机 %s (id=%d, ip=%s)——runner 约数分钟内上线（cloud-init 装底座）\n", d.Name, d.ID, d.IPv4Public)
+	fmt.Printf("已建机 %s (id=%s, ip=%s)——runner 约数分钟内上线（cloud-init 装底座）\n", d.Name, d.ID, d.IPv4Public)
 	return nil
 }
 

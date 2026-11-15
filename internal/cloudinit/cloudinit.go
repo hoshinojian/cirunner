@@ -55,6 +55,13 @@ write_files:
     content: |
       APT::Periodic::Update-Package-Lists "1";
       APT::Periodic::Unattended-Upgrade "0";
+  # Rescue access: some network paths filter inbound 22 to DO sgp1 (2026-11-15
+  # smoke: fresh IP unreachable on 22/ICMP from the ops host). sshd also listens
+  # on 443, same pattern as nms test nodes (sshd dual-port in nms pitfalls).
+  - path: /etc/ssh/sshd_config.d/99-cirunner-ports.conf
+    content: |
+      Port 22
+      Port 443
 
 users:
   - name: runner
@@ -65,6 +72,13 @@ users:
 
 runcmd:
   - systemctl enable --now docker
+  - |
+    # Make sshd listen on both ports early (Ubuntu 24.04 socket-activation trap:
+    # disable ssh.socket and run ssh.service directly, same as vpsctl's generator).
+    set -x
+    systemctl disable --now ssh.socket || true
+    systemctl enable ssh.service || true
+    systemctl restart ssh
   - |
     #!/bin/sh
     # Install GitHub Actions runner from the LATEST release (>= 2.329.0 mandatory:

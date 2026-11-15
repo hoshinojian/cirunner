@@ -43,16 +43,16 @@ func (f *fakeGH) RemoveRunner(ctx context.Context, repo string, id int64) error 
 type fakeVPS struct {
 	droplets []vpsctlapi.Droplet
 	created  []vpsctlapi.CreateOpts
-	deleted  []int64
+	deleted  []string
 }
 
 func (f *fakeVPS) Create(ctx context.Context, o vpsctlapi.CreateOpts) (vpsctlapi.Droplet, error) {
 	f.created = append(f.created, o)
-	d := vpsctlapi.Droplet{Account: o.Account, ID: int64(100 + len(f.created)), Name: fmt.Sprintf("%s-%s-%s-%02d", o.NamePrefix, o.Account, o.Region, o.StartIndex), IPv4Public: "1.2.3.4"}
+	d := vpsctlapi.Droplet{Account: o.Account, ID: fmt.Sprintf("%d", 100+len(f.created)), Name: fmt.Sprintf("%s-%s-%s-%02d", o.NamePrefix, o.Account, o.Region, o.StartIndex), IPv4Public: "1.2.3.4"}
 	f.droplets = append(f.droplets, d)
 	return d, nil
 }
-func (f *fakeVPS) ListByTag(ctx context.Context, tag string) ([]vpsctlapi.Droplet, error) {
+func (f *fakeVPS) ListByTag(ctx context.Context, tag, account string) ([]vpsctlapi.Droplet, error) {
 	if tag == "cirunner" {
 		return f.droplets, nil
 	}
@@ -67,7 +67,7 @@ func (f *fakeVPS) ListByTag(ctx context.Context, tag string) ([]vpsctlapi.Drople
 	}
 	return out, nil
 }
-func (f *fakeVPS) Delete(ctx context.Context, account string, id int64) error {
+func (f *fakeVPS) Delete(ctx context.Context, account string, id string) error {
 	f.deleted = append(f.deleted, id)
 	var out []vpsctlapi.Droplet
 	for _, d := range f.droplets {
@@ -191,7 +191,7 @@ func TestReconcileBudgetBlocksCreate(t *testing.T) {
 func TestReconcileIdleTeardownRemovesDropletThenRegistration(t *testing.T) {
 	cfg := testCfg(t)
 	vps := &fakeVPS{droplets: []vpsctlapi.Droplet{
-		{Account: "team2-ci", ID: 5, Name: "cirunner-team2-ci-sgp1-01", Tags: []string{"cirunner", "repo:nms"}},
+		{Account: "team2-ci", ID: "5", Name: "cirunner-team2-ci-sgp1-01", Tags: []string{"cirunner", "repo:nms"}},
 	}}
 	gh := &fakeGH{queued: githubapi.QueuedInfo{ObservedAt: time.Now()}}
 	e := newEngine(cfg, gh, vps)
@@ -213,7 +213,7 @@ func TestReconcileIdleTeardownRemovesDropletThenRegistration(t *testing.T) {
 	if _, err := e.Reconcile(context.Background(), testRepo(), false, &budget); err != nil {
 		t.Fatal(err)
 	}
-	if len(vps.deleted) != 1 || vps.deleted[0] != 5 {
+	if len(vps.deleted) != 1 || vps.deleted[0] != "5" {
 		t.Fatalf("空闲超时应删机 id=5，got %v", vps.deleted)
 	}
 	// 第三轮：机器已删，runner 转 offline 残留 → 清注册
@@ -229,7 +229,7 @@ func TestReconcileIdleTeardownRemovesDropletThenRegistration(t *testing.T) {
 func TestTeardownRefusesForeignRunners(t *testing.T) {
 	cfg := testCfg(t)
 	vps := &fakeVPS{droplets: []vpsctlapi.Droplet{
-		{Account: "team2-ci", ID: 5, Name: "cirunner-team2-ci-sgp1-01", Tags: []string{"cirunner", "repo:nms"}},
+		{Account: "team2-ci", ID: "5", Name: "cirunner-team2-ci-sgp1-01", Tags: []string{"cirunner", "repo:nms"}},
 	}}
 	gh := &fakeGH{runners: []githubapi.Runner{
 		{ID: 42, Name: "cirunner-team2-ci-sgp1-01", Status: "online"},
@@ -239,7 +239,7 @@ func TestTeardownRefusesForeignRunners(t *testing.T) {
 	if err := e.Teardown(context.Background(), testRepo()); err != nil {
 		t.Fatal(err)
 	}
-	if len(vps.deleted) != 1 || vps.deleted[0] != 5 {
+	if len(vps.deleted) != 1 || vps.deleted[0] != "5" {
 		t.Fatal("down 应删本仓 droplet")
 	}
 	if len(gh.removed) != 1 || gh.removed[0] != 42 {

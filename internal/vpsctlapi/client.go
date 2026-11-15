@@ -28,7 +28,7 @@ func NewClient(bin, accountsFile string) *Client {
 // Droplet 是 vpsctl JSON 输出里的节点（字段名与 vpsctl ServerJSON 对齐）。
 type Droplet struct {
 	Account    string    `json:"account"`
-	ID         int64     `json:"id"`
+	ID         string    `json:"id"`
 	Name       string    `json:"name"`
 	Status     string    `json:"status"`
 	Region     string    `json:"region"`
@@ -75,7 +75,7 @@ type listError struct {
 
 type opResult struct {
 	Account string `json:"account"`
-	ID      int64  `json:"id"`
+	ID      string `json:"id"`
 	OK      bool   `json:"ok"`
 	Error   string `json:"error"`
 }
@@ -126,14 +126,18 @@ func (c *Client) Create(ctx context.Context, o CreateOpts) (Droplet, error) {
 	}
 	d := res.Created[0]
 	if d.IPv4Public == "" {
-		return d, fmt.Errorf("节点已创建（%s id=%d）但未就绪（无公网 IP），请用 vpsctl list --tag 查看并手动处置", d.Name, d.ID)
+		return d, fmt.Errorf("节点已创建（%s id=%s）但未就绪（无公网 IP），请用 vpsctl list --tag 查看并手动处置", d.Name, d.ID)
 	}
 	return d, nil
 }
 
-// ListByTag 按 DO tag 精确过滤列机。
-func (c *Client) ListByTag(ctx context.Context, tag string) ([]Droplet, error) {
+// ListByTag 按 DO tag 精确过滤列机。account 非空时透传 -only（同 token 多账号
+// 会让同一台 droplet 在每个账号名下重复出现，必须钉死账号）。
+func (c *Client) ListByTag(ctx context.Context, tag, account string) ([]Droplet, error) {
 	args := append(c.baseArgs("list"), "-tag", tag)
+	if account != "" {
+		args = append(args, "-only", account)
+	}
 	out, err := c.Run(ctx, c.Bin, args...)
 	if err != nil && len(out) == 0 {
 		return nil, fmt.Errorf("vpsctl list: %w", err)
@@ -149,9 +153,9 @@ func (c *Client) ListByTag(ctx context.Context, tag string) ([]Droplet, error) {
 }
 
 // Delete 非交互精确单删（vpsctl 安全闸：--ids account/id --confirm 1）。
-func (c *Client) Delete(ctx context.Context, account string, id int64) error {
+func (c *Client) Delete(ctx context.Context, account string, id string) error {
 	args := append(c.baseArgs("delete"),
-		"-ids", fmt.Sprintf("%s/%d", account, id),
+		"-ids", account+"/"+id,
 		"-confirm", "1",
 	)
 	out, err := c.Run(ctx, c.Bin, args...)
@@ -164,7 +168,7 @@ func (c *Client) Delete(ctx context.Context, account string, id int64) error {
 	}
 	for _, op := range res {
 		if !op.OK {
-			return fmt.Errorf("vpsctl delete %s/%d 失败: %s", op.Account, op.ID, op.Error)
+			return fmt.Errorf("vpsctl delete %s/%s 失败: %s", op.Account, op.ID, op.Error)
 		}
 	}
 	return nil

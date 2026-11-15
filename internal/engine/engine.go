@@ -35,8 +35,8 @@ type GH interface {
 // VPS 是 DO 侧能力（由 vpsctlapi.Client 实现，测试可替换）。
 type VPS interface {
 	Create(ctx context.Context, o vpsctlapi.CreateOpts) (vpsctlapi.Droplet, error)
-	ListByTag(ctx context.Context, tag string) ([]vpsctlapi.Droplet, error)
-	Delete(ctx context.Context, account string, id int64) error
+	ListByTag(ctx context.Context, tag, account string) ([]vpsctlapi.Droplet, error)
+	Delete(ctx context.Context, account string, id string) error
 }
 
 // Engine 是编排器。
@@ -109,7 +109,7 @@ func (e *Engine) Observe(ctx context.Context, repo config.Repo) (decide.Obs, err
 	if err != nil {
 		return decide.Obs{}, fmt.Errorf("%s 观察 runner: %w", repo.Repo, err)
 	}
-	droplets, err := e.VPS.ListByTag(ctx, repo.RepoTag())
+	droplets, err := e.VPS.ListByTag(ctx, repo.RepoTag(), repo.Account)
 	if err != nil {
 		return decide.Obs{}, fmt.Errorf("%s 观察 droplet: %w", repo.Repo, err)
 	}
@@ -167,12 +167,12 @@ func (e *Engine) execute(ctx context.Context, repo config.Repo, obs decide.Obs, 
 		if budget != nil {
 			*budget--
 		}
-		e.Log.Printf("[%s] 已建机 %s (id=%d, ip=%s)", repo.Repo, d.Name, d.ID, d.IPv4Public)
+		e.Log.Printf("[%s] 已建机 %s (id=%s, ip=%s)", repo.Repo, d.Name, d.ID, d.IPv4Public)
 	case decide.ActDeleteDroplet:
 		if err := e.VPS.Delete(ctx, repo.Account, a.DropletID); err != nil {
 			return err
 		}
-		e.Log.Printf("[%s] 已删机 id=%d（%s）", repo.Repo, a.DropletID, a.Reason)
+		e.Log.Printf("[%s] 已删机 id=%s（%s）", repo.Repo, a.DropletID, a.Reason)
 	case decide.ActRemoveRegistration:
 		for _, r := range obs.Runners {
 			if r.Name == a.RunnerName {
@@ -291,11 +291,37 @@ func nameIndex(r config.Repo, name string) int {
 }
 
 // CountAllDroplets 统计编排器名下全部 droplet（全局配额用）。
+// 按配置里的账号去重列机（同 token 多账号会同机重复），再按 droplet id 去重。
 func (e *Engine) CountAllDroplets(ctx context.Context) (int, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	ds, err := e.VPS.ListByTag(ctx, CirunnerTag)
-	return len(ds), err
+	seen := map[string]bool{}
+	for _, acc := range uniqueAccounts(e.Cfg) {
+		ds, err := e.VPS.ListByTag(ctx, CirunnerTag, acc)
+		if err != nil {
+			return 0, err
+		}
+		for _, d := range ds {
+			seen[d.ID] = true
+		}
+	}
+	return len(seen), nil
+}
+
+func uniqueAccounts(cfg *config.Config) []string {
+	var out []string
+	for _, r := range cfg.Repos {
+		dup := false
+		for _, a := range out {
+			if a == r.Account {
+				dup = true
+			}
+		}
+		if !dup {
+			out = append(out, r.Account)
+		}
+	}
+	return out
 }
 
 // Teardown 强制回收一个租户仓的全部 droplet 与对应注册（down 命令）。
@@ -308,7 +334,7 @@ func (e *Engine) Teardown(ctx context.Context, repo config.Repo) error {
 		if err := e.VPS.Delete(ctx, repo.Account, d.ID); err != nil {
 			return fmt.Errorf("删机 %s: %w", d.Name, err)
 		}
-		e.Log.Printf("[%s] down: 已删机 %s (id=%d)", repo.Repo, d.Name, d.ID)
+		e.Log.Printf("[%s] down: 已删机 %s (id=%s)", repo.Repo, d.Name, d.ID)
 	}
 	// 清理本命名空间的残留注册（在线的也清——机器已经没了）。
 	for _, r := range obs.Runners {
@@ -316,7 +342,7 @@ func (e *Engine) Teardown(ctx context.Context, repo config.Repo) error {
 			if err := e.GH.RemoveRunner(ctx, repo.Repo, r.ID); err != nil {
 				return fmt.Errorf("清注册 %s: %w", r.Name, err)
 			}
-			e.Log.Printf("[%s] down: 已清注册 %s (id=%d)", repo.Repo, r.Name, r.ID)
+			e.Log.Printf("[%s] down: 已清注册 %s (runner id=%d)", repo.Repo, r.Name, r.ID)
 		}
 	}
 	delete(e.States, repo.Repo)

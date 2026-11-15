@@ -25,6 +25,10 @@ func TestRenderContainsPitfallFixes(t *testing.T) {
 	must := []string{
 		// 坑#1：禁 unattended-upgrades（自动升级会杀正跑 job）
 		`APT::Periodic::Unattended-Upgrade "0";`,
+		// 救援通道：22 被路径过滤时仍可 443 进机（2026-11-15 冒烟实录）
+		"Port 22",
+		"Port 443",
+		"systemctl disable --now ssh.socket",
 		// 坑#2：runner 用 latest（≥2.329.0 强制，旧版注册 404）
 		"api.github.com/repos/actions/runner/releases/latest",
 		// 坑#4：svc install 后 daemon-reload

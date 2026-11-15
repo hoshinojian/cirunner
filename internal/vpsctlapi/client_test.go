@@ -20,7 +20,7 @@ func TestCreateArgs(t *testing.T) {
 	var got []string
 	c.Run = func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		got = args
-		return []byte(`{"batch":"b","created":[{"account":"team2-ci","id":1,"name":"cirunner-team2-ci-sgp1-01","ipv4_public":"1.2.3.4"}],"errors":[]}`), nil
+		return []byte(`{"batch":"b","created":[{"account":"team2-ci","id":"1","name":"cirunner-team2-ci-sgp1-01","ipv4_public":"1.2.3.4"}],"errors":[]}`), nil
 	}
 	_, err := c.Create(context.Background(), CreateOpts{
 		Account: "team2-ci", Region: "sgp1", Size: "c2-4vcpu-8gb", Image: "ubuntu-24-04-x64",
@@ -44,7 +44,7 @@ func TestCreateArgs(t *testing.T) {
 }
 
 func TestCreateNoIPReportsDropletForManualCleanup(t *testing.T) {
-	c := fakeClient(`{"batch":"b","created":[{"account":"team2-ci","id":9,"name":"cirunner-x"}],"errors":[]}`, nil)
+	c := fakeClient(`{"batch":"b","created":[{"account":"team2-ci","id":"9","name":"cirunner-x"}],"errors":[]}`, nil)
 	_, err := c.Create(context.Background(), CreateOpts{Account: "a", UserDataFile: "/f", Tags: []string{"t"}})
 	if err == nil || !strings.Contains(err.Error(), "id=9") {
 		t.Fatalf("无公网 IP 应报错并带 id 供手动处置，got %v", err)
@@ -60,10 +60,10 @@ func TestCreatePartialFailure(t *testing.T) {
 
 func TestListParsesDroplets(t *testing.T) {
 	c := fakeClient(`{"droplets":[
-		{"account":"team2-ci","id":11,"name":"cirunner-team2-ci-sgp1-01","status":"active","ipv4_public":"1.1.1.1","tags":["cirunner","repo:nms"],"created_at":"2026-11-15T10:00:00Z"},
-		{"account":"team3","id":12,"name":"other","tags":[]}
+		{"account":"team2-ci","id":"11","name":"cirunner-team2-ci-sgp1-01","status":"active","ipv4_public":"1.1.1.1","tags":["cirunner","repo:nms"],"created_at":"2026-11-15T10:00:00Z"},
+		{"account":"team3","id":"12","name":"other","tags":[]}
 	]}`, nil)
-	ds, err := c.ListByTag(context.Background(), "cirunner")
+	ds, err := c.ListByTag(context.Background(), "cirunner", "team2-ci")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,18 +77,18 @@ func TestListParsesDroplets(t *testing.T) {
 
 func TestListAccountErrorFails(t *testing.T) {
 	c := fakeClient(`{"droplets":[],"errors":[{"account":"x","error":"bad token"}]}`, nil)
-	if _, err := c.ListByTag(context.Background(), "cirunner"); err == nil {
+	if _, err := c.ListByTag(context.Background(), "cirunner", "team2-ci"); err == nil {
 		t.Fatal("账号级失败应报错")
 	}
 }
 
 func TestDeleteChecksOpResult(t *testing.T) {
-	ok := fakeClient(`[{"account":"team2-ci","id":5,"ok":true}]`, nil)
-	if err := ok.Delete(context.Background(), "team2-ci", 5); err != nil {
+	ok := fakeClient(`[{"account":"team2-ci","id":"5","ok":true}]`, nil)
+	if err := ok.Delete(context.Background(), "team2-ci", "5"); err != nil {
 		t.Fatal(err)
 	}
-	bad := fakeClient(`[{"account":"team2-ci","id":5,"ok":false,"error":"denied"}]`, nil)
-	if err := bad.Delete(context.Background(), "team2-ci", 5); err == nil {
+	bad := fakeClient(`[{"account":"team2-ci","id":"5","ok":false,"error":"denied"}]`, nil)
+	if err := bad.Delete(context.Background(), "team2-ci", "5"); err == nil {
 		t.Fatal("ok=false 应报错")
 	}
 }

@@ -11,7 +11,7 @@ func cfg() Cfg { return Cfg{NamePrefix: "cirunner"} }
 
 func obs() Obs { return Obs{Now: base} }
 
-func droplet(id int64, name string) Droplet {
+func droplet(id string, name string) Droplet {
 	return Droplet{ID: id, Name: name, CreatedAt: base.Add(-10 * time.Minute)}
 }
 
@@ -82,7 +82,7 @@ func TestNoCreateWithoutQueue(t *testing.T) {
 
 func TestColdStartPendingFirstSampleNoDelete(t *testing.T) {
 	o := obs()
-	o.Droplets = []Droplet{droplet(1, "cirunner-team2-sgp1-01")}
+	o.Droplets = []Droplet{droplet("1", "cirunner-team2-sgp1-01")}
 	o.QueuedRuns = 1
 	acts, st := Decide(cfg(), State{}, o)
 	if hasDelete(acts) || hasCreate(acts) {
@@ -95,7 +95,7 @@ func TestColdStartPendingFirstSampleNoDelete(t *testing.T) {
 
 func TestColdStartTimeoutDeletesAndCountsFail(t *testing.T) {
 	o := obs()
-	o.Droplets = []Droplet{droplet(1, "cirunner-team2-sgp1-01")}
+	o.Droplets = []Droplet{droplet("1", "cirunner-team2-sgp1-01")}
 	o.QueuedRuns = 1
 	st := State{PendingSince: base.Add(-16 * time.Minute)}
 	acts, st2 := Decide(cfg(), st, o)
@@ -112,7 +112,7 @@ func TestColdStartTimeoutDeletesAndCountsFail(t *testing.T) {
 
 func TestColdStartSuccessResetsFails(t *testing.T) {
 	o := obs()
-	o.Droplets = []Droplet{droplet(1, "cirunner-team2-sgp1-01")}
+	o.Droplets = []Droplet{droplet("1", "cirunner-team2-sgp1-01")}
 	o.Runners = []Runner{runner("cirunner-team2-sgp1-01", true)}
 	st := State{PendingSince: base.Add(-5 * time.Minute), ColdStartFails: 1}
 	_, st2 := Decide(cfg(), st, o)
@@ -136,7 +136,7 @@ func TestColdStartFailsExhaustedAlertsInsteadOfCreate(t *testing.T) {
 
 func TestIdleTeardownAfterTimeout(t *testing.T) {
 	o := obs()
-	o.Droplets = []Droplet{droplet(1, "cirunner-team2-sgp1-01")}
+	o.Droplets = []Droplet{droplet("1", "cirunner-team2-sgp1-01")}
 	o.Runners = []Runner{runner("cirunner-team2-sgp1-01", false)}
 	st := State{IdleSince: base.Add(-21 * time.Minute)}
 	acts, st2 := Decide(cfg(), st, o)
@@ -150,7 +150,7 @@ func TestIdleTeardownAfterTimeout(t *testing.T) {
 
 func TestIdleWithinTimeoutKeepsMachine(t *testing.T) {
 	o := obs()
-	o.Droplets = []Droplet{droplet(1, "cirunner-team2-sgp1-01")}
+	o.Droplets = []Droplet{droplet("1", "cirunner-team2-sgp1-01")}
 	o.Runners = []Runner{runner("cirunner-team2-sgp1-01", false)}
 	st := State{IdleSince: base.Add(-5 * time.Minute)}
 	acts, st2 := Decide(cfg(), st, o)
@@ -164,7 +164,7 @@ func TestIdleWithinTimeoutKeepsMachine(t *testing.T) {
 
 func TestIdleFirstSampleSetsIdleSince(t *testing.T) {
 	o := obs()
-	o.Droplets = []Droplet{droplet(1, "cirunner-team2-sgp1-01")}
+	o.Droplets = []Droplet{droplet("1", "cirunner-team2-sgp1-01")}
 	o.Runners = []Runner{runner("cirunner-team2-sgp1-01", false)}
 	acts, st := Decide(cfg(), State{}, o)
 	if hasDelete(acts) {
@@ -177,7 +177,7 @@ func TestIdleFirstSampleSetsIdleSince(t *testing.T) {
 
 func TestBusyRunnerIsNotIdle(t *testing.T) {
 	o := obs()
-	o.Droplets = []Droplet{droplet(1, "cirunner-team2-sgp1-01")}
+	o.Droplets = []Droplet{droplet("1", "cirunner-team2-sgp1-01")}
 	o.Runners = []Runner{runner("cirunner-team2-sgp1-01", true)}
 	st := State{IdleSince: base.Add(-25 * time.Minute)} // 早已超时
 	acts, st2 := Decide(cfg(), st, o)
@@ -192,7 +192,7 @@ func TestBusyRunnerIsNotIdle(t *testing.T) {
 func TestQueuedResetsIdleSince(t *testing.T) {
 	o := obs()
 	o.QueuedRuns = 2
-	o.Droplets = []Droplet{droplet(1, "cirunner-team2-sgp1-01")}
+	o.Droplets = []Droplet{droplet("1", "cirunner-team2-sgp1-01")}
 	o.Runners = []Runner{runner("cirunner-team2-sgp1-01", true)}
 	st := State{IdleSince: base.Add(-30 * time.Minute)}
 	_, st2 := Decide(cfg(), st, o)
@@ -205,7 +205,7 @@ func TestStallReplaceAfterTwoSamples(t *testing.T) {
 	o := obs()
 	o.QueuedRuns = 1
 	o.OldestQueuedAge = 16 * time.Minute // 超过 15m 阈值
-	o.Droplets = []Droplet{droplet(1, "cirunner-team2-sgp1-01")}
+	o.Droplets = []Droplet{droplet("1", "cirunner-team2-sgp1-01")}
 	o.Runners = []Runner{runner("cirunner-team2-sgp1-01", false)} // online 不接活（P139）
 	st := State{StallSamples: 1}                                  // 上一轮已采样一次
 	acts, st2 := Decide(cfg(), st, o)
@@ -221,7 +221,7 @@ func TestStallFirstSampleOnlyCounts(t *testing.T) {
 	o := obs()
 	o.QueuedRuns = 1
 	o.OldestQueuedAge = 16 * time.Minute
-	o.Droplets = []Droplet{droplet(1, "cirunner-team2-sgp1-01")}
+	o.Droplets = []Droplet{droplet("1", "cirunner-team2-sgp1-01")}
 	o.Runners = []Runner{runner("cirunner-team2-sgp1-01", false)}
 	acts, st := Decide(cfg(), State{}, o)
 	if hasDelete(acts) {
@@ -236,7 +236,7 @@ func TestStallBusyRunnerNotStall(t *testing.T) {
 	o := obs()
 	o.QueuedRuns = 1
 	o.OldestQueuedAge = 40 * time.Minute // 排队很老，但 runner 正忙（串行消化中，nms 单 run ≈23m 属正常）
-	o.Droplets = []Droplet{droplet(1, "cirunner-team2-sgp1-01")}
+	o.Droplets = []Droplet{droplet("1", "cirunner-team2-sgp1-01")}
 	o.Runners = []Runner{runner("cirunner-team2-sgp1-01", true)}
 	st := State{StallSamples: 1}
 	acts, st2 := Decide(cfg(), st, o)
@@ -279,7 +279,7 @@ func TestMaxRunnersTwoCreatesSecond(t *testing.T) {
 	c.MaxRunners = 2
 	o := obs()
 	o.QueuedRuns = 3
-	o.Droplets = []Droplet{droplet(1, "cirunner-team2-sgp1-01")}
+	o.Droplets = []Droplet{droplet("1", "cirunner-team2-sgp1-01")}
 	o.Runners = []Runner{runner("cirunner-team2-sgp1-01", true)} // 一台在忙
 	acts, _ := Decide(c, State{}, o)
 	if !hasCreate(acts) {
@@ -292,7 +292,7 @@ func TestPendingDropletBlocksSecondCreate(t *testing.T) {
 	c.MaxRunners = 2
 	o := obs()
 	o.QueuedRuns = 1
-	o.Droplets = []Droplet{droplet(1, "cirunner-team2-sgp1-01")} // 冷启中，无 online runner
+	o.Droplets = []Droplet{droplet("1", "cirunner-team2-sgp1-01")} // 冷启中，无 online runner
 	acts, _ := Decide(c, State{}, o)
 	if hasCreate(acts) {
 		t.Fatalf("已有冷启中的机器时不应再建（避免同仓并发冷启）：%v", acts)

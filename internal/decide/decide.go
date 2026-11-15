@@ -11,7 +11,7 @@ import "time"
 
 // Droplet 是 vpsctl 侧观察到的、属于本仓的 cirunner droplet。
 type Droplet struct {
-	ID        int64
+	ID        string
 	Name      string
 	CreatedAt time.Time
 }
@@ -65,7 +65,7 @@ const (
 // Action 是一轮决策产生的单个动作。
 type Action struct {
 	Kind       ActionKind
-	DropletID  int64
+	DropletID  string
 	RunnerName string
 	Reason     string
 }
@@ -103,7 +103,7 @@ func Decide(c Cfg, st State, obs Obs) ([]Action, State) {
 	}
 
 	var acts []Action
-	emit := func(k ActionKind, id int64, name, reason string) {
+	emit := func(k ActionKind, id string, name, reason string) {
 		acts = append(acts, Action{Kind: k, DropletID: id, RunnerName: name, Reason: reason})
 	}
 
@@ -120,7 +120,7 @@ func Decide(c Cfg, st State, obs Obs) ([]Action, State) {
 			continue
 		}
 		if r.Status == "offline" && !dropletNames[r.Name] {
-			emit(ActRemoveRegistration, 0, r.Name, "offline 残留注册，机器已不存在")
+			emit(ActRemoveRegistration, "", r.Name, "offline 残留注册，机器已不存在")
 		}
 	}
 
@@ -143,9 +143,9 @@ func Decide(c Cfg, st State, obs Obs) ([]Action, State) {
 		st.PendingSince, st.IdleSince, st.StallSamples = time.Time{}, time.Time{}, 0
 		if obs.QueuedRuns > 0 {
 			if st.ColdStartFails >= c.MaxColdStartFails {
-				emit(ActAlert, 0, "", "连续冷启失败已达上限，停止自动建机，需人工排查 cloud-init/网络")
+				emit(ActAlert, "", "", "连续冷启失败已达上限，停止自动建机，需人工排查 cloud-init/网络")
 			} else {
-				emit(ActCreate, 0, "", "有排队 run 且无 runner")
+				emit(ActCreate, "", "", "有排队 run 且无 runner")
 			}
 		}
 		return acts, st
@@ -197,7 +197,7 @@ func Decide(c Cfg, st State, obs Obs) ([]Action, State) {
 
 	// 7) 扩容：有排队且未达每仓上限（冷启在途时不叠加建，避免同仓并发冷启）。
 	if obs.QueuedRuns > 0 && len(obs.Droplets) < c.MaxRunners && len(active) > 0 {
-		emit(ActCreate, 0, "", "有排队 run 且 runner 全忙，未达每仓上限")
+		emit(ActCreate, "", "", "有排队 run 且 runner 全忙，未达每仓上限")
 	}
 
 	return acts, st
