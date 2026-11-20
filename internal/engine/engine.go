@@ -27,6 +27,7 @@ const CirunnerTag = "cirunner"
 // GH 是 GitHub 侧能力（由 githubapi.Client 实现，测试可替换）。
 type GH interface {
 	QueuedRuns(ctx context.Context, repo string) (githubapi.QueuedInfo, error)
+	InProgressQueuedJobs(ctx context.Context, repo string) (githubapi.QueuedInfo, error)
 	Runners(ctx context.Context, repo string) ([]githubapi.Runner, error)
 	MintToken(ctx context.Context, repo string) (string, error)
 	RemoveRunner(ctx context.Context, repo string, id int64) error
@@ -97,6 +98,8 @@ func (e *Engine) SaveStates() error {
 }
 
 // Observe 采集一个租户仓的世界快照（全部 GitHub 侧信号 + 本仓 droplet）。
+// 排队信号 = queued run 数 + in_progress run 内仍排队 job 数（热补丁缺陷 #2，
+// P141：run 级 status 滞后，只数 queued run 会漏掉 run 内剩余排队 job）。
 func (e *Engine) Observe(ctx context.Context, repo config.Repo) (decide.Obs, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -105,6 +108,11 @@ func (e *Engine) Observe(ctx context.Context, repo config.Repo) (decide.Obs, err
 	if err != nil {
 		return decide.Obs{}, fmt.Errorf("%s 观察排队: %w", repo.Repo, err)
 	}
+	q2, err := e.GH.InProgressQueuedJobs(ctx, repo.Repo)
+	if err != nil {
+		return decide.Obs{}, fmt.Errorf("%s 观察 in_progress run 内排队 job: %w", repo.Repo, err)
+	}
+	q = githubapi.MergeQueued(q, q2)
 	runners, err := e.GH.Runners(ctx, repo.Repo)
 	if err != nil {
 		return decide.Obs{}, fmt.Errorf("%s 观察 runner: %w", repo.Repo, err)

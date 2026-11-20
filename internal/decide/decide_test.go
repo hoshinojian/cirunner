@@ -124,13 +124,64 @@ func TestColdStartSuccessResetsFails(t *testing.T) {
 func TestColdStartFailsExhaustedAlertsInsteadOfCreate(t *testing.T) {
 	o := obs()
 	o.QueuedRuns = 1
-	st := State{ColdStartFails: 2} // 达默认上限
+	// 达默认上限且最后一次失败在冷却窗口内 → 告警停建（热补丁后停建非永久）
+	st := State{ColdStartFails: 2, LastColdStartFailAt: base.Add(-10 * time.Minute)}
 	acts, _ := Decide(cfg(), st, o)
 	if hasCreate(acts) {
-		t.Fatalf("连续冷启失败达上限不应再自动建机：%v", acts)
+		t.Fatalf("冷却窗口内不应自动建机：%v", acts)
 	}
 	if !hasAlert(acts) {
 		t.Fatalf("应告警提示人工介入：%v", acts)
+	}
+}
+
+// 热补丁缺陷 #1：冷启失败满上限后永久停建（计数只在活跃 runner 出现时清零，
+// 而停建后不会再出现）→ 死锁。修复：距最后一次失败 ≥ 冷却窗口后允许试探建机。
+func TestColdStartRetryAfterCooldownProbes(t *testing.T) {
+	o := obs()
+	o.QueuedRuns = 1
+	st := State{ColdStartFails: 2, LastColdStartFailAt: base.Add(-31 * time.Minute)}
+	acts, _ := Decide(cfg(), st, o)
+	if !hasCreate(acts) {
+		t.Fatalf("过冷却窗口应允许试探建机：%v", acts)
+	}
+}
+
+func TestColdStartTimeoutRecordsFailTimestamp(t *testing.T) {
+	o := obs()
+	o.Droplets = []Droplet{droplet("1", "cirunner-team2-sgp1-01")}
+	o.QueuedRuns = 1
+	st := State{PendingSince: base.Add(-16 * time.Minute)}
+	_, st2 := Decide(cfg(), st, o)
+	if st2.LastColdStartFailAt != base {
+		t.Fatalf("冷启超时应记录失败时刻，got %v", st2.LastColdStartFailAt)
+	}
+}
+
+// 旧 states.json 没有 LastColdStartFailAt 字段（零值）：宁可给一次试探，
+// 不能让迁移后的守护永久卡在停建（缺陷 #1 的本质就是卡死）。
+func TestColdStartLegacyZeroTimestampProbes(t *testing.T) {
+	o := obs()
+	o.QueuedRuns = 1
+	st := State{ColdStartFails: 2} // LastColdStartFailAt 零值
+	acts, _ := Decide(cfg(), st, o)
+	if !hasCreate(acts) {
+		t.Fatalf("零值失败时刻（旧状态迁移）应给一次试探：%v", acts)
+	}
+}
+
+// 试探建机又冷启超时：失败时刻刷新，冷却窗口重新起算（而非永久停建）。
+func TestColdStartProbeFailRenewsCooldown(t *testing.T) {
+	o := obs()
+	o.Droplets = []Droplet{droplet("1", "cirunner-team2-sgp1-01")}
+	o.QueuedRuns = 1
+	st := State{ColdStartFails: 2, PendingSince: base.Add(-16 * time.Minute), LastColdStartFailAt: base.Add(-31 * time.Minute)}
+	_, st2 := Decide(cfg(), st, o)
+	if st2.ColdStartFails != 3 {
+		t.Fatalf("试探失败应继续累计，got %d", st2.ColdStartFails)
+	}
+	if st2.LastColdStartFailAt != base {
+		t.Fatalf("试探失败应刷新失败时刻，got %v", st2.LastColdStartFailAt)
 	}
 }
 
