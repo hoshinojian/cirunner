@@ -67,6 +67,70 @@ func (c *Client) QueuedRuns(ctx context.Context, repo string) (QueuedInfo, error
 	return info, nil
 }
 
+// InProgressQueuedJobs 数 in_progress run 内仍排队（status=queued）的 job 数与
+// 最老年龄。热补丁缺陷 #2：run 级 status 不可靠（P141）——run 一旦有 job 开跑
+// 即变 in_progress，status=queued 过滤看不见其中剩余排队 job，需逐 run 拉 jobs 补数。
+func (c *Client) InProgressQueuedJobs(ctx context.Context, repo string) (QueuedInfo, error) {
+	out, err := c.Run(ctx, c.GhBin, "api",
+		fmt.Sprintf("repos/%s/actions/runs?status=in_progress&per_page=100", repo),
+		"--jq", `[.workflow_runs[].id]`)
+	if err != nil {
+		return QueuedInfo{}, fmt.Errorf("gh api in_progress runs: %w", err)
+	}
+	var runIDs []int64
+	if err := json.Unmarshal(out, &runIDs); err != nil {
+		return QueuedInfo{}, fmt.Errorf("解析 in_progress run 列表: %w", err)
+	}
+	info := QueuedInfo{ObservedAt: time.Now()}
+	for _, id := range runIDs {
+		out, err := c.Run(ctx, c.GhBin, "api",
+			fmt.Sprintf("repos/%s/actions/runs/%d/jobs?filter=latest&per_page=100", repo, id),
+			"--jq", `{n: ([.jobs[] | select(.status == "queued")] | length), oldest: ([.jobs[] | select(.status == "queued") | .created_at] | min)}`)
+		if err != nil {
+			return QueuedInfo{}, fmt.Errorf("gh api run %d jobs: %w", id, err)
+		}
+		var q queuedJQ
+		if err := json.Unmarshal(out, &q); err != nil {
+			return QueuedInfo{}, fmt.Errorf("解析 run %d jobs 输出: %w", id, err)
+		}
+		info.Count += q.N
+		if q.Oldest != nil {
+			created, err := time.Parse(time.RFC3339, *q.Oldest)
+			if err != nil {
+				return QueuedInfo{}, fmt.Errorf("解析排队时间 %q: %w", *q.Oldest, err)
+			}
+			if age := info.ObservedAt.Sub(created); age > info.OldestAge {
+				info.OldestAge = age
+			}
+		}
+	}
+	return info, nil
+}
+
+// MergeQueued 合并两路排队观察（queued run 与 in_progress run 内 queued job）：
+// 数量求和，最老排队年龄按绝对创建时刻比较，观察基准取较新一路。
+func MergeQueued(a, b QueuedInfo) QueuedInfo {
+	out := QueuedInfo{Count: a.Count + b.Count, ObservedAt: a.ObservedAt}
+	if b.ObservedAt.After(out.ObservedAt) {
+		out.ObservedAt = b.ObservedAt
+	}
+	oldest := oldestAbs(a)
+	if abs := oldestAbs(b); oldest.IsZero() || (!abs.IsZero() && abs.Before(oldest)) {
+		oldest = abs
+	}
+	if !oldest.IsZero() {
+		out.OldestAge = out.ObservedAt.Sub(oldest)
+	}
+	return out
+}
+
+func oldestAbs(q QueuedInfo) time.Time {
+	if q.Count == 0 || q.OldestAge <= 0 {
+		return time.Time{}
+	}
+	return q.ObservedAt.Add(-q.OldestAge)
+}
+
 // Runners 返回仓内全部 self-hosted runner 注册（含外部/手工机的——前缀过滤由 decide 做）。
 func (c *Client) Runners(ctx context.Context, repo string) ([]Runner, error) {
 	out, err := c.Run(ctx, c.GhBin, "api",

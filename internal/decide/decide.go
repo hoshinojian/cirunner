@@ -35,21 +35,23 @@ type Obs struct {
 
 // State 是守护进程跨轮携带的记忆（每仓一份）。
 type State struct {
-	IdleSince      time.Time // 观察到"无队列且 runner 空闲"的起点；零值=不在空闲计时
-	PendingSince   time.Time // "有 droplet 但 runner 未 online"的冷启起点；零值=无冷启在途
-	StallSamples   int       // 连续停摆信号采样计数
-	ColdStartFails int       // 连续冷启超时次数
+	IdleSince           time.Time // 观察到"无队列且 runner 空闲"的起点；零值=不在空闲计时
+	PendingSince        time.Time // "有 droplet 但 runner 未 online"的冷启起点；零值=无冷启在途
+	StallSamples        int       // 连续停摆信号采样计数
+	ColdStartFails      int       // 连续冷启超时次数
+	LastColdStartFailAt time.Time // 最近一次冷启超时时刻；零值=旧状态迁移或从未失败
 }
 
 // Cfg 是决策参数（零值字段取默认）。
 type Cfg struct {
-	NamePrefix         string        // 本编排器拥有的 runner/droplet 名前缀，默认 "cirunner"
-	MaxRunners         int           // 每仓 droplet 上限，默认 1
-	IdleTimeout        time.Duration // 空闲回收阈值，默认 20m
-	ColdStartTimeout   time.Duration // 冷启（建机到 runner online）阈值，默认 15m
-	StallQueuedAge     time.Duration // 停摆判据的排队年龄阈值，默认 15m
-	StallSamplesNeeded int           // 停摆确认所需连续采样数，默认 2（P139 口径）
-	MaxColdStartFails  int           // 连续冷启失败上限，超过则告警停建，默认 2
+	NamePrefix          string        // 本编排器拥有的 runner/droplet 名前缀，默认 "cirunner"
+	MaxRunners          int           // 每仓 droplet 上限，默认 1
+	IdleTimeout         time.Duration // 空闲回收阈值，默认 20m
+	ColdStartTimeout    time.Duration // 冷启（建机到 runner online）阈值，默认 15m
+	StallQueuedAge      time.Duration // 停摆判据的排队年龄阈值，默认 15m
+	StallSamplesNeeded  int           // 停摆确认所需连续采样数，默认 2（P139 口径）
+	MaxColdStartFails   int           // 连续冷启失败上限，超过则告警停建，默认 2
+	ColdStartRetryAfter time.Duration // 停建冷却窗口：距最后一次失败满此时长允许试探建机，默认 30m
 }
 
 // ActionKind 是动作类型。
@@ -76,6 +78,7 @@ const (
 	defaultColdStart   = 15 * time.Minute
 	defaultStallAge    = 15 * time.Minute
 	defaultMaxFails    = 2
+	defaultRetryAfter  = 30 * time.Minute
 )
 
 // Decide 执行一轮决策。纯函数：相同 (cfg, state, obs) 恒定输出 (actions, newState)。
@@ -100,6 +103,9 @@ func Decide(c Cfg, st State, obs Obs) ([]Action, State) {
 	}
 	if c.MaxColdStartFails == 0 {
 		c.MaxColdStartFails = defaultMaxFails
+	}
+	if c.ColdStartRetryAfter == 0 {
+		c.ColdStartRetryAfter = defaultRetryAfter
 	}
 
 	var acts []Action
@@ -138,12 +144,16 @@ func Decide(c Cfg, st State, obs Obs) ([]Action, State) {
 		}
 	}
 
-	// 2) 无 droplet：按需建机或告警。
+	// 2) 无 droplet：按需建机或告警。停建不是永久的：距最后一次冷启失败满冷却
+	//    窗口后允许试探建机（热补丁缺陷 #1——计数只在活跃 runner 出现时清零，
+	//    而停建后不会再出现，原逻辑是死锁）。零值时刻（旧状态迁移）也给一次
+	//    试探：宁可多试一次，不能永久卡死。
 	if len(obs.Droplets) == 0 {
 		st.PendingSince, st.IdleSince, st.StallSamples = time.Time{}, time.Time{}, 0
 		if obs.QueuedRuns > 0 {
-			if st.ColdStartFails >= c.MaxColdStartFails {
-				emit(ActAlert, "", "", "连续冷启失败已达上限，停止自动建机，需人工排查 cloud-init/网络")
+			if st.ColdStartFails >= c.MaxColdStartFails &&
+				!st.LastColdStartFailAt.IsZero() && obs.Now.Sub(st.LastColdStartFailAt) < c.ColdStartRetryAfter {
+				emit(ActAlert, "", "", "连续冷启失败已达上限，冷却中停止自动建机，需人工排查 cloud-init/网络")
 			} else {
 				emit(ActCreate, "", "", "有排队 run 且无 runner")
 			}
@@ -162,6 +172,7 @@ func Decide(c Cfg, st State, obs Obs) ([]Action, State) {
 			deleteAll("冷启超时：droplet 存在但 runner 未上线")
 			st.PendingSince = time.Time{}
 			st.ColdStartFails++
+			st.LastColdStartFailAt = obs.Now
 		}
 		return acts, st
 	}

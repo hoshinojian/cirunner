@@ -16,11 +16,12 @@ import (
 )
 
 type fakeGH struct {
-	queued   githubapi.QueuedInfo
-	runners  []githubapi.Runner
-	token    string
-	removed  []int64
-	queuedFn func(repo string) githubapi.QueuedInfo
+	queued     githubapi.QueuedInfo
+	inProgress githubapi.QueuedInfo
+	runners    []githubapi.Runner
+	token      string
+	removed    []int64
+	queuedFn   func(repo string) githubapi.QueuedInfo
 }
 
 func (f *fakeGH) QueuedRuns(ctx context.Context, repo string) (githubapi.QueuedInfo, error) {
@@ -28,6 +29,13 @@ func (f *fakeGH) QueuedRuns(ctx context.Context, repo string) (githubapi.QueuedI
 		return f.queuedFn(repo), nil
 	}
 	return f.queued, nil
+}
+
+func (f *fakeGH) InProgressQueuedJobs(ctx context.Context, repo string) (githubapi.QueuedInfo, error) {
+	if f.inProgress.ObservedAt.IsZero() {
+		return githubapi.QueuedInfo{ObservedAt: time.Now()}, nil
+	}
+	return f.inProgress, nil
 }
 func (f *fakeGH) Runners(ctx context.Context, repo string) ([]githubapi.Runner, error) {
 	return f.runners, nil
@@ -262,5 +270,47 @@ func TestStatesPersist(t *testing.T) {
 	}
 	if e2.States["a/b"].StallSamples != 3 {
 		t.Fatal("状态持久化往返不一致")
+	}
+}
+
+// 热补丁缺陷 #2 回归：run status=in_progress（已有 job 在跑）但内部还有
+// queued job、且无 droplet —— 原型只数 queued run，此时永不建机，job 卡死。
+func TestReconcileCreatesForQueuedJobInsideInProgressRun(t *testing.T) {
+	cfg := testCfg(t)
+	gh := &fakeGH{
+		token: "AGB2ZQKHL4TGHTRSEXAMPLE",
+		// queued run 数为 0，但 in_progress run 里还有 3 个排队 job
+		queued:     githubapi.QueuedInfo{ObservedAt: time.Now()},
+		inProgress: githubapi.QueuedInfo{Count: 3, OldestAge: 3 * time.Minute, ObservedAt: time.Now()},
+	}
+	vps := &fakeVPS{}
+	e := newEngine(cfg, gh, vps)
+	budget := 2
+	acts, err := e.Reconcile(context.Background(), testRepo(), false, &budget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vps.created) != 1 {
+		t.Fatalf("in_progress run 内有 queued job 且无 droplet 应建机，got %d 台（acts=%+v）", len(vps.created), acts)
+	}
+}
+
+func TestObserveMergesTwoQueuedSignals(t *testing.T) {
+	cfg := testCfg(t)
+	now := time.Now()
+	gh := &fakeGH{
+		queued:     githubapi.QueuedInfo{Count: 1, OldestAge: 20 * time.Minute, ObservedAt: now},
+		inProgress: githubapi.QueuedInfo{Count: 2, OldestAge: 4 * time.Minute, ObservedAt: now},
+	}
+	e := newEngine(cfg, gh, &fakeVPS{})
+	obs, err := e.Observe(context.Background(), testRepo())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obs.QueuedRuns != 3 {
+		t.Fatalf("排队信号应为两路合计 3，got %d", obs.QueuedRuns)
+	}
+	if obs.OldestQueuedAge < 19*time.Minute || obs.OldestQueuedAge > 21*time.Minute {
+		t.Fatalf("最老排队年龄应约 20m，got %v", obs.OldestQueuedAge)
 	}
 }
