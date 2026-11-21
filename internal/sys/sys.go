@@ -163,10 +163,11 @@ func (h *Host) UptimeSec(ctx context.Context) (int, error) {
 	return strconv.Atoi(strings.TrimSpace(string(out)))
 }
 
-// RunnerVersion 从 _diag 的 .runner 文件取版本（无则空）。
+// RunnerVersion 用 config.sh --version 取版本（沙箱实录 2026-11-21：.runner
+// 文件里没有 version 字段；config.sh --version 输出如 "2.338.2"）。
 func (h *Host) RunnerVersion(ctx context.Context) string {
 	out, err := h.Cmd.Run(ctx, "sh", "-c",
-		`grep -h '"version"' /opt/actions-runner*/.runner 2>/dev/null | head -1 | sed 's/.*"version" *: *"\([^"]*\)".*/\1/'`)
+		`for d in /opt/actions-runner /opt/actions-runner-a /opt/actions-runner-b; do [ -x $d/config.sh ] && sudo -u runner $d/config.sh --version 2>/dev/null && return 0; done; true`)
 	if err != nil || len(out) == 0 {
 		return ""
 	}

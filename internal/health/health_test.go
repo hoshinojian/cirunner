@@ -54,7 +54,7 @@ func healthyHost() *sys.Host {
 	fc.add("free -m", "Mem: 8000 2000 5900 100 100 5800")
 	fc.add("cut -d   -f1 /proc/loadavg", "0.30 ")
 	fc.add("cut -d . -f1 /proc/uptime", "900 ")
-	fc.add(`sh -c grep -h '"version"'`, "2.329.0")
+	fc.add("sh -c for d in", "2.329.0")
 	return &sys.Host{Cmd: fc}
 }
 
