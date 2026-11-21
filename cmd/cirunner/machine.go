@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/hoshinojian/cirunner/internal/act"
 	"github.com/hoshinojian/cirunner/internal/diag"
@@ -25,10 +26,20 @@ func runMachineCommand(sub string, args []string) (bool, int) {
 	if !machineCommands[sub] {
 		return false, 0
 	}
-	fs := flag.NewFlagSet(sub, flag.ExitOnError)
+	// §5.4 的用法是 flag 在位置参数之后（act <name> --json）：Go flag 遇首个
+	// 位置参数即停，后面的 flag 会落进 Args()——先手工分离再 Parse。
+	var flagArgs, positional []string
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			flagArgs = append(flagArgs, a)
+		} else {
+			positional = append(positional, a)
+		}
+	}
+	fs := flag.NewFlagSet(sub, flag.ContinueOnError)
 	jsonOut := fs.Bool("json", false, "输出 JSON（编排器消费；默认人读中文）")
 	lines := fs.Int("lines", 200, "diag：各文本段截取的末尾行数")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
 		return true, 2
 	}
 
@@ -74,19 +85,19 @@ func runMachineCommand(sub string, args []string) (bool, int) {
 		}
 		return true, 0
 	case "act":
-		if fs.NArg() != 1 {
+		if len(positional) != 1 {
 			fmt.Fprintln(os.Stderr, "用法: cirunner act <restart-runner|stop-runner|clean-work> --json")
 			return true, 2
 		}
 		var r act.Result
-		switch fs.Arg(0) {
+		switch positional[0] {
 		case "restart-runner", "stop-runner", "clean-work":
 			if !requireRoot() {
 				return true, 1
 			}
 			host := sys.NewHost()
 			ctx := context.Background()
-			switch fs.Arg(0) {
+			switch positional[0] {
 			case "restart-runner":
 				r = act.RestartRunner(ctx, host)
 			case "stop-runner":
@@ -95,7 +106,7 @@ func runMachineCommand(sub string, args []string) (bool, int) {
 				r = act.CleanWork(ctx, host)
 			}
 		default:
-			fmt.Fprintf(os.Stderr, "cirunner: 未知动作 %q（白名单：restart-runner/stop-runner/clean-work）\n", fs.Arg(0))
+			fmt.Fprintf(os.Stderr, "cirunner: 未知动作 %q（白名单：restart-runner/stop-runner/clean-work）\n", positional[0])
 			return true, 2
 		}
 		if *jsonOut {
