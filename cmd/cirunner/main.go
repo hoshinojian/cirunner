@@ -54,6 +54,11 @@ func main() {
 		os.Exit(2)
 	}
 	sub := rest[0]
+
+	// 机器侧子命令（health/diag/act）：不需要编排器配置，先行拦截（§5.4）。
+	if handled, code := runMachineCommand(sub, rest[1:]); handled {
+		os.Exit(code)
+	}
 	fs := flag.NewFlagSet(sub, flag.ExitOnError)
 	var force bool
 	if sub == "down" {

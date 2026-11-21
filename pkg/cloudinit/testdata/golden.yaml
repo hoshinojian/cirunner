@@ -1,0 +1,108 @@
+#cloud-config
+# Managed by cirunner. This machine is disposable - do not edit or deploy anything else on it.
+# Pitfall fixes encoded below are numbered as in nms docs/runbooks/gitrunner.md.
+ssh_pwauth: false
+ssh_authorized_keys:
+  - 'ssh-ed25519 AAAA orchestrator'
+  - 'ssh-ed25519 BBBB maintainer'
+
+packages:
+  - docker.io
+  - jq
+  - curl
+  - build-essential
+  - shellcheck
+
+# Pitfall (1): unattended-upgrades restarts services mid-job and kills running CI jobs.
+write_files:
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "0";
+  # Rescue access (8): some network paths filter inbound 22; sshd also listens on 443.
+  - path: /etc/ssh/sshd_config.d/99-cirunner-ports.conf
+    content: |
+      Port 22
+      Port 443
+  # Stage markers for diagnostics: packages -> agent -> runner-download ->
+  # runner-config -> runner-started (health/diag read this to see where boot stalled).
+  - path: /var/lib/cirunner/stage
+    content: |
+      packages
+
+users:
+  - name: runner
+    groups: [docker]
+    shell: /bin/bash
+    # Pitfall (9): gitleaks/sqlc CI jobs need "sudo install" of pinned binaries.
+    sudo: ALL=(ALL) NOPASSWD:ALL
+
+runcmd:
+  - |
+    #!/bin/sh
+    set -eux
+    BAKED=0; [ -f /var/lib/cirunner/baked ] && BAKED=1
+    # Baked snapshot images already installed everything except registration/start.
+    if [ "$BAKED" = 0 ]; then
+      systemctl enable --now docker
+    fi
+  - |
+    # Fix root access early (7): DO's ubuntu image marks the root password expired
+    # which blocks even pubkey logins; clear it for key-only auth.
+    # Pitfall (8): Ubuntu 24.04 ssh.socket activation trap - disable socket, run
+    # ssh.service directly, and reload to pick up the 22+443 listen config.
+    set -x
+    chage -d "$(date +%F)" root
+    systemctl disable --now ssh.socket || true
+    systemctl enable ssh.service || true
+    systemctl restart ssh
+  - |
+    #!/bin/sh
+    # Machine-side agent binary (cirunner health/diag/act), pinned by version and
+    # sha256 (REDESIGN 5.3). A bad download must fail the boot (exit 1) so cold
+    # start surfaces as scenario B instead of a half-healthy machine.
+    set -eux
+    BAKED=0; [ -f /var/lib/cirunner/baked ] && BAKED=1
+    if [ "$BAKED" = 0 ]; then
+      curl -fsSL -o /usr/local/bin/cirunner https://github.com/hoshinojian/cirunner/releases/download/v0.1.0/cirunner-linux-amd64
+      echo 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  /usr/local/bin/cirunner' | sha256sum -c -
+      chmod 0755 /usr/local/bin/cirunner
+    fi
+    echo agent > /var/lib/cirunner/stage
+  - |
+    #!/bin/sh
+    # Install GitHub Actions runner from the LATEST release (2): >= 2.329.0
+    # mandatory, older tarballs 404 on registration. Disposable machine, no
+    # upgrade path needed.
+    set -eux
+    BAKED=0; [ -f /var/lib/cirunner/baked ] && BAKED=1
+    if [ "$BAKED" = 0 ]; then
+      mkdir -p /opt/actions-runner
+      cd /opt/actions-runner
+      VER=$(curl -fsSL https://api.github.com/repos/actions/runner/releases/latest | jq -r '.tag_name | ltrimstr("v")')
+      case "$VER" in
+        ''|*[!0-9.]*) echo "bad runner version: $VER" >&2; exit 1;;
+      esac
+      curl -fsSL -o runner.tgz "https://github.com/actions/runner/releases/download/v${VER}/actions-runner-linux-x64-${VER}.tar.gz"
+      tar xzf runner.tgz
+      rm -f runner.tgz
+      ./bin/installdependencies.sh
+    fi
+    echo runner-download > /var/lib/cirunner/stage
+  - |
+    #!/bin/sh
+    # Register each runner instance (the only non-baked step besides start).
+    set -eux
+    echo runner-config > /var/lib/cirunner/stage
+    chown -R runner: /opt/actions-runner
+    sudo -u runner /opt/actions-runner/config.sh --url https://github.com/hoshinojian/nms --token AGB2ZQKHL4TGHTRSEXAMPLE --name ci-nms-team2-ci-sgp1-01 --labels ci --unattended
+  - |
+    #!/bin/sh
+    # Install services (3): svc.sh install then daemon-reload BEFORE start, or
+    # systemd may not see the fresh unit. Unit repo segment is hyphenated (4).
+    set -eux
+    cd /opt/actions-runner
+    ./svc.sh install runner
+    systemctl daemon-reload
+    systemctl start actions.runner.hoshinojian-nms.ci-nms-team2-ci-sgp1-01.service
+    echo runner-started > /var/lib/cirunner/stage
