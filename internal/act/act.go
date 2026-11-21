@@ -33,16 +33,18 @@ func RestartRunner(ctx context.Context, h *sys.Host) Result {
 	if err := h.Systemctl(ctx, append([]string{"restart"}, units...)...); err != nil {
 		return Result{Action: "restart-runner", OK: false, Detail: fmt.Sprintf("restart 失败: %v", err)}
 	}
+	// rpd=2 时要等 Listener 数达到 unit 数（复审修正：出现一个就报成功会漏判
+	// 另一实例挂起）
 	deadline := time.Now().Add(listenerWait)
 	for time.Now().Before(deadline) {
-		if ok, _, _ := h.PgrepRunning(ctx, "Runner.Listener"); ok {
+		if h.PgrepCount(ctx, "Runner.Listener") >= len(units) {
 			return Result{Action: "restart-runner", OK: true,
-				Detail: fmt.Sprintf("已重启 %d 个实例，Listener 已出现", len(units))}
+				Detail: fmt.Sprintf("已重启 %d 个实例，Listener 全部出现", len(units))}
 		}
 		time.Sleep(time.Second)
 	}
 	return Result{Action: "restart-runner", OK: false,
-		Detail: "已重启但 30s 内未见 Listener（P139 式挂起，建议 diag）"}
+		Detail: fmt.Sprintf("已重启但 30s 内 Listener 数未达 %d（P139 式挂起，建议 diag）", len(units))}
 }
 
 // StopRunner 停止全部 runner 实例。

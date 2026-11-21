@@ -12,18 +12,22 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # 发布前先测试（本仓无独立 CI job 时也保证：测试不过不发布）
+      - run: go vet ./...
+      - run: go test -race ./...
       - name: 构建 linux/amd64 静态二进制
         run: |
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o cirunner-linux-amd64 ./cmd/cirunner
           sha256sum cirunner-linux-amd64 > cirunner-linux-amd64.sha256
       - name: 上传 release 资产
-        uses: softprops/action-gh-release@v2
+        # 钉 commit SHA（防第三方 action 被篡改；对应 softprops/action-gh-release v2.3.0）
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.3.0
         with:
           files: |
             cirunner-linux-amd64
