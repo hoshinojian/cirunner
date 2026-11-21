@@ -93,6 +93,15 @@ func (h *Host) JournalTail(ctx context.Context, unit string, n int) (string, err
 	return string(out), nil
 }
 
+// PgrepCount 统计匹配进程数（pgrep -f，按行数）。
+func (h *Host) PgrepCount(ctx context.Context, pattern string) int {
+	out, err := h.Cmd.Run(ctx, "pgrep", "-f", pattern)
+	if err != nil || len(out) == 0 {
+		return 0
+	}
+	return len(strings.Split(strings.TrimSpace(string(out)), "\n"))
+}
+
 // PgrepRunning 判断进程模式是否存在（pgrep -f）。
 func (h *Host) PgrepRunning(ctx context.Context, pattern string) (bool, int, error) {
 	out, err := h.Cmd.Run(ctx, "pgrep", "-f", pattern)
@@ -167,7 +176,7 @@ func (h *Host) UptimeSec(ctx context.Context) (int, error) {
 // 文件里没有 version 字段；config.sh --version 输出如 "2.338.2"）。
 func (h *Host) RunnerVersion(ctx context.Context) string {
 	out, err := h.Cmd.Run(ctx, "sh", "-c",
-		`for d in /opt/actions-runner /opt/actions-runner-a /opt/actions-runner-b; do [ -x $d/config.sh ] && sudo -u runner $d/config.sh --version 2>/dev/null && return 0; done; true`)
+		`for d in /opt/actions-runner /opt/actions-runner-a /opt/actions-runner-b; do [ -x $d/config.sh ] && sudo -u runner $d/config.sh --version 2>/dev/null && break; done; true`)
 	if err != nil || len(out) == 0 {
 		return ""
 	}
