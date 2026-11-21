@@ -1,0 +1,30 @@
+# 机器侧 cirunner 发布（REDESIGN §5.1）：打 tag 构建 linux/amd64 静态二进制，
+# 上传资产与 sha256。cloud-init 按版本下载并校验 sha256（pkg/cloudinit）。
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: 构建 linux/amd64 静态二进制
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o cirunner-linux-amd64 ./cmd/cirunner
+          sha256sum cirunner-linux-amd64 > cirunner-linux-amd64.sha256
+      - name: 上传 release 资产
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            cirunner-linux-amd64
+            cirunner-linux-amd64.sha256
