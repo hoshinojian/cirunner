@@ -1,51 +1,35 @@
-# cirunner — 按需 GitHub Actions 自建 runner 池
+# cirunner — ciorch 的 runner 机器侧 agent 与 cloud-init 配方
 
-守护进程盯各配置仓的 CI 队列：有排队 run 就建机装 runner，空闲就删机。
-项目无关——nms 只是第一个租户，其他项目在配置里加一条 `repos` 即可。
-动机：DO 关机不停止计费，只有删机省钱（$94/月常驻 → 按需约 $0.14/h）。
+cirunner 提供两样东西，都由 [ciorch](https://github.com/hoshinojian/ciorch) 编排器使用：
 
-## 架构
+1. **`pkg/cloudinit`**：渲染 runner droplet 的 `#cloud-config` user-data（装底座包、下载并
+   `sha256sum -c` 校验本仓发布的 agent 二进制、装最新 actions runner、注册、启动）。
+   ciorch 经 go module 依赖本包（当前钉 v0.1.3）。
+2. **`cirunner` 机器侧二进制**（GitHub Release `v0.1.x`，`cirunner-linux-amd64`）：装在 runner
+   机器 `/usr/local/bin/cirunner`，由编排器经 ssh 以 root 调用：
 
-```
-cirunner daemon（任意常驻 Linux，先跑 WSL2）
-  每 60s 每仓：gh api（排队/runner 状态）+ vpsctl list --tag（droplet）
-  → decide（纯函数）→ 动作：
-      建机   有排队且无 droplet（铸 1h token → cloud-init → vpsctl create）
-      删机   无排队且 runner 空闲持续 20min
-      换机   P139 判据：排队最老 >15min 且 busy=false 连续两采样
-      冷启超时 建机后 15min runner 未上线 → 删了重建；连续 2 次失败转告警
-  约束：全局 max_droplets（默认 2）、每仓 max_runners（默认 1）
-```
+   ```
+   cirunner health [--json]                    健康检查（不 OK 退出码 1）
+   cirunner diag [--json] [--lines=200]        健康 + 各类日志等诊断材料（不 OK 退出码 1，JSON 仍完整）
+   cirunner act <restart-runner|stop-runner|clean-work> [--json]   白名单动作
+   ```
 
-- **会话式常驻 runner**（droplet 内 systemd 服务，非 `--ephemeral`）：nms 七项
-  checks 是 7 个并行 job，一单一注会让每个 job 多付一次冷启动；单机串行 ≈23min
-  与现状一致。disposable 的是机器。
-- **判据只用 GitHub 侧信号**（pitfalls P139 教训：机器侧 journal 静默不可作依据，
-  test job 跑起来的 ~19 分钟里本来就安静）。
-- 机器侧不存任何凭据/不自毁：回收统一由本地编排执行（守 nms runbook 安全守则）。
+调度（观察队列、建删机、事故与诊断）全部在 ciorch。全景说明见 ciorch 仓 `docs/HANDBOOK.md`。
 
-## 快速开始
+## 沿革：原型调度器（已退役）
 
-```bash
-cp configs/cirunner.example.json ~/.config/cirunner/cirunner.json  # 按需改
-make build
-bin/cirunner status          # 看队列/runner/droplet
-bin/cirunner plan            # 看本轮会做什么（不执行）
-bin/cirunner up nms          # 手动建一台（冷启动约 4~6 分钟）
-bin/cirunner down nms        # 手动回收（有排队时拒绝，-force 覆盖）
-systemctl --user enable --now cirunner   # 守护托管（拷 systemd/cirunner.service 到 ~/.config/systemd/user/）
-```
+2026-11-15 至 2026-11-22，本仓曾是一个在维护者 WSL 上运行的按需 runner 调度原型
+（`cirunner -config … status|plan|up|down|daemon`，按 run 粒度观察队列、经 vpsctl 建删机）。
+其缺陷与重设计见 ciorch 仓 `docs/REDESIGN.md` §1.4。2026-11-22 nms 的 CI 切换到 ciorch 后，
+原型调度代码从本仓删除，**最后包含原型的提交是 `b0225ce`（= v0.1.3）**。
+回滚路径（维护者 WSL 上的 `~/.local/bin/cirunner-proto` 与 `systemctl --user` 单元）不依赖本仓
+当前代码，步骤见 ciorch `docs/HANDBOOK.md` §10.7。
 
-## 前置条件
+## 发布
 
-1. `vpsctl`（子进程调用，不改它）：本仓按 commit `c55ed90`（sha256
-   `a19e6a0a40b359387f2683b3bb11c998e5b75837912ca298737f44c58234a2a3`）验证过。
-2. vpsctl 账号配置里为 CI 加一个**无密码**账号条目（如 `team2-ci`，复用 DO token）：
-   vpsctl 守卫规定带 `ssh_password` 的账号与 `--user-data` 互斥；passwordless +
-   user-data 走 D3 分叉合法。CI 一次性机器只走公钥，密码不落机。
-3. `gh` 已登录且对租户仓有 admin（铸 registration token 需要）。
-4. 租户仓 workflow 的 `runs-on` labels 与配置 `labels` 匹配（如 `[self-hosted, ci]`
-   ↔ `["ci"]`；`self-hosted` 是注册时自动带的）。
+打 `v*` tag 触发 `.github/workflows/release.yml`：`go test -race` 通过后构建
+`cirunner-linux-amd64` 并附 sha256。ciorch 配置 `machine_agent.version/sha256` 钉住版本，
+cloud-init 下载后校验，校验失败即冷启失败（ciorch 场景 B）。
 
 ## cloud-init 固化的坑（改动模板前必读 nms docs/runbooks/gitrunner.md）
 
@@ -58,21 +42,13 @@ systemctl --user enable --now cirunner   # 守护托管（拷 systemd/cirunner.s
 - 规格锁 DO c 系专用核（共享核两次击穿 -race 时敏用例）；同规格同区避免
   nms 覆盖率基线重校（决策 #148 先例）
 
-## 已知约束
-
-- 冷启动 4~6 分钟：空闲后首个 PR 多等这一窗口（可做预装 snapshot 优化，未做）。
-- 守护不在线则 CI 不会自动起（WSL2 睡眠/关机）：迁移到任意常驻 Linux 即可，
-  守护本身不跑 CI、不占资源，$4~6/月微型机足够。
-- 判据按 **run** 而非 job 粒度：排队 run 数即队列信号，nms 七项串行由单 runner 消化。
-
 ## 布局
 
 ```
-cmd/cirunner          CLI（status/plan/up/down/daemon）
-internal/config       JSON 配置加载校验
-internal/decide       纯决策（无 IO，全分支单测）
-internal/cloudinit    模板渲染 + ASCII 校验
-internal/githubapi    gh api 子进程封装
-internal/vpsctlapi    vpsctl 子进程封装（create/list/delete）
-internal/engine       编排粘合（观察→决策→执行，依赖注入可测）
+cmd/cirunner      机器侧 CLI（health/diag/act）
+internal/health   健康检查
+internal/diag     诊断材料采集
+internal/act      白名单动作
+internal/sys      系统命令封装（可注入，便于测试）
+pkg/cloudinit     cloud-init 渲染（ciorch 依赖的公开 API）
 ```

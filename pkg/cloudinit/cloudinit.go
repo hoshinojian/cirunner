@@ -1,9 +1,8 @@
 // Package cloudinit 是 cirunner 的公开渲染 API（REDESIGN §5.3）：ciorch 经
 // go module 依赖本包渲染 runner droplet 的 #cloud-config user-data。
 //
-// 自 internal/cloudinit 迁出并扩展（迁移为复制而非移动：原型的 engine 仍
-// import internal/cloudinit，阶段 6 删原型调度代码时一并清理）。固化的每
-// 一条坑对应 nms docs/runbooks/gitrunner.md 已知坑（括号内编号）：
+// 自原型的 internal/cloudinit 迁出并扩展（原型调度器已于 2026-11-22 退役，
+// internal 副本随之删除）。固化的每一条坑对应 nms docs/runbooks/gitrunner.md 已知坑（括号内编号）：
 //
 //	（1）unattended-upgrades 自动升级杀正跑 job → apt 配置禁用
 //	（2）runner < 2.329.0 注册 404 → 一律 latest + 版本号格式守卫
