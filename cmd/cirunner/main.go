@@ -37,3 +37,5 @@ func usage() {
   cirunner act <restart-runner|stop-runner|clean-work> [--json]
 `)
 }
+
+// ci acceptance probe 20261123（验收用，不合并）
